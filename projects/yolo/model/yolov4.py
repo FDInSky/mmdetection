@@ -1,4 +1,3 @@
-
 import os.path as osp
 import random
 import math
@@ -9,10 +8,10 @@ import mmcv
 from mmcv.runner.dist_utils import master_only
 from mmcv.runner import Hook, Fp16OptimizerHook, HOOKS, OptimizerHook
 from mmcv.parallel import is_module_wrapper
-from .single_stage import SingleStageDetector
-from ..builder import DETECTORS
-from ...datasets import PIPELINES
-from ...datasets.pipelines.compose import Compose
+from mmdet.models.detectors.single_stage import SingleStageDetector
+from mmdet.models.builder import DETECTORS
+from mmdet.datasets import PIPELINES
+from mmdet.datasets.pipelines.compose import Compose
 
 
 @DETECTORS.register_module()

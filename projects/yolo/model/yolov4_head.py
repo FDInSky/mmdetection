@@ -9,10 +9,10 @@ from mmcv.runner import force_fp32
 from mmdet.core import (build_anchor_generator, build_assigner,
                         build_bbox_coder, build_sampler, images_to_levels,
                         multi_apply, multiclass_nms)
-from .base_dense_head import BaseDenseHead
-from .dense_test_mixins import BBoxTestMixin
-from ..builder import HEADS, build_loss
-from ..losses import reduce_loss
+from mmdet.models.dense_heads.base_dense_head import BaseDenseHead
+from mmdet.models.dense_heads.dense_test_mixins import BBoxTestMixin
+from mmdet.models.builder import HEADS, build_loss
+from mmdet.models.losses import reduce_loss
 
 
 class SoftFocalLoss(nn.Module):

@@ -1,7 +1,6 @@
 import torch
-
-from .builder import ANCHOR_GENERATORS
-from .anchor_generator import YOLOAnchorGenerator
+from mmdet.core.anchor.builder import ANCHOR_GENERATORS
+from mmdet.core.anchor.anchor_generator import YOLOAnchorGenerator
 
 
 @ANCHOR_GENERATORS.register_module()

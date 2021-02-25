@@ -6,7 +6,7 @@ from mmcv.cnn.bricks.activation import build_activation_layer
 from mmcv.cnn.bricks.norm import build_norm_layer
 from mmcv.cnn import ConvModule, constant_init, kaiming_init
 from mmcv.runner import load_checkpoint
-from ..builder import BACKBONES
+from mmdet.models.builder import BACKBONES
 
 
 class Conv(ConvModule):

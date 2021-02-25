@@ -3,8 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from mmcv.runner import auto_fp16
 from mmcv.cnn import xavier_init
-from ..builder import NECKS
-from ..backbones.darknet_csp import Conv, BottleneckCSP2, SPPCSP
+from mmdet.models.builder import NECKS
+from mmdet.models.backbones.darknet_csp import Conv, BottleneckCSP2, SPPCSP
 
 
 @NECKS.register_module()

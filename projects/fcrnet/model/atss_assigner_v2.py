@@ -1,9 +1,9 @@
 import torch
 
-from ..builder import BBOX_ASSIGNERS
-from ..iou_calculators import build_iou_calculator
-from .assign_result import AssignResult
-from .base_assigner import BaseAssigner
+from mmdet.core.bbox.builder import BBOX_ASSIGNERS
+from mmdet.core.bbox.iou_calculators import build_iou_calculator
+from mmdet.core.bbox.assigners.assign_result import AssignResult
+from mmdet.core.bbox.assigners.base_assigner import BaseAssigner
 
 
 @BBOX_ASSIGNERS.register_module()

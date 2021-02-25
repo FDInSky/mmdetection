@@ -6,9 +6,9 @@ import torch.nn as nn
 import mmcv
 from mmdet.core.visualization import imshow_det_bboxes
 from mmdet.core import bbox2result, merge_aug_bboxes
-from ..builder import DETECTORS, build_backbone, build_head, build_neck
-from ..utils.refine_feat import RefineFeat
-from .base import BaseDetector
+from mmdet.models.builder import DETECTORS, build_backbone, build_head, build_neck
+from mmdet.models.utils.refine_feat import RefineFeat
+from mmdet.models.base import BaseDetector
 
 
 @DETECTORS.register_module()

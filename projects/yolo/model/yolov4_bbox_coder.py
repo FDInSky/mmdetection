@@ -1,7 +1,6 @@
 import torch
-
-from ..builder import BBOX_CODERS
-from .base_bbox_coder import BaseBBoxCoder
+from mmdet.core.bbox.builder import BBOX_CODERS
+from mmdet.core.bbox.coder.base_bbox_coder import BaseBBoxCoder
 
 
 @BBOX_CODERS.register_module()

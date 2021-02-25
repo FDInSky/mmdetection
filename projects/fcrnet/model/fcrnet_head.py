@@ -3,10 +3,10 @@ import torch
 import torch.nn as nn
 from mmcv.cnn import ConvModule, bias_init_with_prob, normal_init
 from mmcv.runner import force_fp32
-from mmdet.core import (anchor_inside_flags, multiclass_nms, unmap, multi_apply, images_to_levels)
 from mmcv.ops import DeformConv2d 
-from . import AnchorHead
-from ..builder import HEADS, build_loss
+from mmdet.core import (anchor_inside_flags, multiclass_nms, unmap, multi_apply, images_to_levels)
+from mmdet.models.dense_heads import AnchorHead
+from mmdet.models.builder import HEADS, build_loss
 
 
 @HEADS.register_module
