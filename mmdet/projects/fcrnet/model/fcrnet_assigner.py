@@ -7,7 +7,7 @@ from mmdet.core.bbox.assigners.base_assigner import BaseAssigner
 
 
 @BBOX_ASSIGNERS.register_module()
-class ATSSAssignerV2(BaseAssigner):
+class FCRAssigner(BaseAssigner):
     def __init__(self,
                  topk=100,
                  ratio=0.01,

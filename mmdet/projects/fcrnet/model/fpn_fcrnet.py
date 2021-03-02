@@ -8,7 +8,7 @@ from mmdet.models.builder import NECKS
 
 
 @NECKS.register_module()
-class FPNV2(nn.Module):
+class FCRFPN(nn.Module):
     r"""Feature Pyramid Network.
 
     This is an implementation of paper `Feature Pyramid Networks for Object
@@ -76,7 +76,7 @@ class FPNV2(nn.Module):
                  norm_cfg=None,
                  act_cfg=None,
                  upsample_cfg=dict(mode='nearest')):
-        super(FPNV2, self).__init__()
+        super(FCRFPN, self).__init__()
         assert isinstance(in_channels, list)
         self.in_channels = in_channels
         self.out_channels = out_channels

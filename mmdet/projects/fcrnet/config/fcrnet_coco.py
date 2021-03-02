@@ -132,7 +132,7 @@ model = dict(
 train_cfg = dict(
     s0=dict(
         assigner=dict(
-            type='ATSSAssignerV2', 
+            type='FCRAssigner', 
             stage=0,
             iou_type=iou_type,
             iou_calculator=dict(type='BboxOverlaps2D'),
@@ -144,7 +144,7 @@ train_cfg = dict(
     sr=[
         dict(
             assigner=dict(
-                type='ATSSAssignerV2', 
+                type='FCRAssigner', 
                 stage=1,
                 iou_type=iou_type,
                 iou_calculator=dict(type='BboxOverlaps2D'),
@@ -155,7 +155,7 @@ train_cfg = dict(
         ),
         dict(
             assigner=dict(
-                type='ATSSAssignerV2', 
+                type='FCRAssigner', 
                 stage=1,
                 iou_type=iou_type,
                 iou_calculator=dict(type='BboxOverlaps2D'),
@@ -184,9 +184,8 @@ test_cfg = dict(
     ]
 )
 dataset_type = 'CocoDataset'
-data_root = '/home/ai/data/zhangang2/ping_all_new/'
-img_norm_cfg = dict(
-    mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
+data_root = '/home/ai/data/coco/'
+img_norm_cfg = dict(mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 train_pipeline = [
     dict(type='LoadImageFromFile', to_float32=True),
     dict(type='LoadAnnotations', with_bbox=True, with_mask=True, with_seg=False),

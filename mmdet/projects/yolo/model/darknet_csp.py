@@ -1,12 +1,29 @@
 import logging
 import torch
 import torch.nn as nn
+import torch.nn.functional as F 
 from torch.nn.modules.batchnorm import _BatchNorm
-from mmcv.cnn.bricks.activation import build_activation_layer
+from mmcv.cnn.bricks.activation import ACTIVATION_LAYERS, build_activation_layer
 from mmcv.cnn.bricks.norm import build_norm_layer
 from mmcv.cnn import ConvModule, constant_init, kaiming_init
 from mmcv.runner import load_checkpoint
 from mmdet.models.builder import BACKBONES
+
+
+@ACTIVATION_LAYERS.register_module()
+class Mish(nn.Module):
+    """"
+    Mish activation
+    """
+    def __init__(self, inplace=None):
+        super().__init__()
+
+    def forward(self, x):
+        """
+        run forward
+        """
+        out = x * (torch.tanh(F.softplus(x)))
+        return out
 
 
 class Conv(ConvModule):
