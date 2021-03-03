@@ -91,22 +91,14 @@ class BottleneckCSP(nn.Module):
                  **kwargs):
         super(BottleneckCSP, self).__init__()
         hidden_channels = int(out_channels * expansion)  # hidden channels
-        self.conv1 = Conv(in_channels,
-                          hidden_channels,
-                          kernel_size=1,
-                          **kwargs)
+        self.conv1 = Conv(in_channels, hidden_channels, kernel_size=1, **kwargs)
         self.conv2 = nn.Conv2d(in_channels, hidden_channels, 1, 1, bias=False)
         self.conv3 = nn.Conv2d(hidden_channels, hidden_channels, 1, 1, bias=False)
-        self.conv4 = Conv(2 * hidden_channels,
-                          out_channels,
-                          kernel_size=1,
-                          **kwargs)
+        self.conv4 = Conv(2 * hidden_channels, out_channels, kernel_size=1, **kwargs)
         csp_norm_cfg = kwargs.get('norm_cfg', dict(type='BN')).copy()
         self.bn = build_norm_layer(csp_norm_cfg, 2 * hidden_channels)[-1]
         csp_act_cfg_ = csp_act_cfg.copy()
-        if csp_act_cfg_['type'] not in [
-            'Tanh', 'PReLU', 'Sigmoid', 'HSigmoid', 'Swish'
-        ]:
+        if csp_act_cfg_['type'] not in ['Tanh', 'PReLU', 'Sigmoid', 'HSigmoid', 'Swish']:
             csp_act_cfg_.setdefault('inplace', True)
         self.csp_act = build_activation_layer(csp_act_cfg_)
         self.bottlenecks = nn.Sequential(
@@ -135,21 +127,13 @@ class BottleneckCSP2(nn.Module):
                  **kwargs):
         super(BottleneckCSP2, self).__init__()
         hidden_channels = int(out_channels)  # hidden channels
-        self.conv1 = Conv(in_channels,
-                          hidden_channels,
-                          kernel_size=1,
-                          **kwargs)
+        self.conv1 = Conv(in_channels, hidden_channels, kernel_size=1, **kwargs)
         self.conv2 = nn.Conv2d(hidden_channels, hidden_channels, 1, 1, bias=False)
-        self.conv3 = Conv(2 * hidden_channels,
-                          out_channels,
-                          kernel_size=1,
-                          **kwargs)
+        self.conv3 = Conv(2 * hidden_channels, out_channels, kernel_size=1, **kwargs)
         csp_norm_cfg = kwargs.get('norm_cfg', dict(type='BN')).copy()
         self.bn = build_norm_layer(csp_norm_cfg, 2 * hidden_channels)[-1]
         csp_act_cfg_ = csp_act_cfg.copy()
-        if csp_act_cfg_['type'] not in [
-            'Tanh', 'PReLU', 'Sigmoid', 'HSigmoid', 'Swish'
-        ]:
+        if csp_act_cfg_['type'] not in ['Tanh', 'PReLU', 'Sigmoid', 'HSigmoid', 'Swish']:
             csp_act_cfg_.setdefault('inplace', True)
         self.csp_act = build_activation_layer(csp_act_cfg_)
         self.bottlenecks = nn.Sequential(
