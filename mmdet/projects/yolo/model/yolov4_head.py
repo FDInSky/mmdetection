@@ -72,9 +72,9 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
                  in_channels,
                  anchor_generator=dict(
                      type='YOLOV4AnchorGenerator',
-                     base_sizes=[[(12, 16), (19, 36), (40, 28)],  # P3/8
-                                 [(36, 75), (76, 55), (72, 146)],  # P4/16
-                                 [(142, 110), (192, 243), (459, 401)]],  # P5/32
+                     base_sizes=[[(12, 16), (19, 36), (40, 28)],        # P3/8
+                                 [(36, 75), (76, 55), (72, 146)],       # P4/16
+                                 [(142, 110), (192, 243), (459, 401)]], # P5/32
                      strides=[8, 16, 32]),
                  bbox_coder=dict(type='YOLOV4BBoxCoder'),
                  featmap_strides=[8, 16, 32],

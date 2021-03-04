@@ -3,8 +3,9 @@ model = dict(
     type='YOLOV4',
     backbone=dict(
         type='DarknetCSP',
-        scale='m5p',
-        out_indices=[3, 4, 5]),
+        architecture='yolov5',
+        scale='l5p',
+        out_indices=[2, 3, 4]),
     neck=dict(
         type='PAFPNCSP',
         in_channels=[256, 512, 1024],
@@ -100,8 +101,8 @@ test_pipeline = [
         ])
 ]
 data = dict(
-    samples_per_gpu=4,
-    workers_per_gpu=4,
+    samples_per_gpu=8,
+    workers_per_gpu=8,
     train=dict(
         type=dataset_type,
         ann_file=data_root + 'annotations/instances_train2017.json',
