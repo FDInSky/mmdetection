@@ -138,8 +138,8 @@ test_pipeline = [
         ])
 ]
 data = dict(
-    samples_per_gpu=2,
-    workers_per_gpu=2,
+    samples_per_gpu=8,
+    workers_per_gpu=8,
     train=dict(
         type=dataset_type,
         ann_file=data_root + 'annotations/train.json',
@@ -158,7 +158,7 @@ data = dict(
 )
 # Optim
 nominal_batch_size = 64
-gpus = 2
+gpus = 8
 accumulate_interval = round(nominal_batch_size / (data['samples_per_gpu'] * gpus))
 optimizer = dict(
     type='SGD', lr=0.01, momentum=0.937, weight_decay=0.0005, nesterov=True,
@@ -171,7 +171,7 @@ optimizer_config = dict(
 )
 lr_config = dict(policy='CosineAnnealing', min_lr_ratio=0.2)
 total_epochs = 300
-load_from = None
+load_from = './pretrain/mmdet_yolov5l.pth'
 resume_from = None
 custom_hooks = [
     dict(

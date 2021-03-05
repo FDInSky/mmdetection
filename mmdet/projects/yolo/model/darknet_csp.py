@@ -6,7 +6,7 @@ from torch.nn.modules.batchnorm import _BatchNorm
 from mmcv.cnn import ConvModule, constant_init, kaiming_init
 from mmcv.runner import load_checkpoint
 from mmdet.models.builder import BACKBONES
-from .darknet_module import * 
+from .base_module import * 
 
 
 arch_settings = {

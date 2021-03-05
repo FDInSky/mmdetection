@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from mmcv.runner import auto_fp16
 from mmcv.cnn import xavier_init
 from mmdet.models.builder import NECKS
-from .darknet_module import Conv, CSP2, CSP3, ConvList
+from .base_module import Conv, CSP2, CSP3, ConvList
 
 
 @NECKS.register_module()

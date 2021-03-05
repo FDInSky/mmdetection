@@ -118,7 +118,8 @@ class FCRHead(AnchorHead):
                             label_channels=1,
                             unmap_outputs=True):
         
-        inside_flags = anchor_inside_flags(flat_anchors, valid_flags, img_meta['img_shape'][:2], self.train_cfg.allowed_border)
+        inside_flags = anchor_inside_flags(
+            flat_anchors, valid_flags, img_meta['img_shape'][:2], self.train_cfg.allowed_border)
         
         if not inside_flags.any():
             return (None,) * 6
@@ -139,7 +140,6 @@ class FCRHead(AnchorHead):
 
         pos_inds = sampling_result.pos_inds
         neg_inds = sampling_result.neg_inds
-        # print("debug pos&neg: ", pos_inds.shape, neg_inds.shape)
         total_inds = len(pos_inds) + len(neg_inds)
         if total_inds == 0:
             relative_num_diff = 0.0
@@ -306,7 +306,6 @@ class FCRHead(AnchorHead):
         labels = labels.reshape(-1)
         label_weights = label_weights.reshape(-1).contiguous()
         cls_score = cls_score.permute(0, 2, 3, 1).reshape(-1, self.cls_out_channels).contiguous()
-        # print("debug3: ", cls_score.shape, labels.shape, label_weights.shape)
         loss_cls = self.loss_cls(cls_score, labels, label_weights, avg_factor=num_total_samples)
         # regression loss
         bbox_targets = bbox_targets.reshape(-1, 4).contiguous()
@@ -320,13 +319,13 @@ class FCRHead(AnchorHead):
         #     bbox_targets,
         #     bbox_weights,
         #     avg_factor=num_total_samples)
+
         # iou loss
         bbox_targets_iou = bbox_targets_iou.reshape(-1, 4).contiguous()
         anchors = anchors.reshape(-1, 4)
         bbox_pred_iou = self.bbox_coder.decode(anchors, bbox_pred)
         loss_iou = self.loss_iou(bbox_pred_iou, bbox_targets_iou, bbox_weights)
 
-        # return loss_cls, loss_bbox+loss_iou
         return loss_cls, loss_iou
 
     def _get_bboxes_single(self,
