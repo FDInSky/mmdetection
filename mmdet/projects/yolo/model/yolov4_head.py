@@ -73,7 +73,7 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
                  loss_iou=dict(
                      type='CIoULoss',
                      loss_weight=0.05),
-                 loss_bbox_type='iou',
+                 loss_bbox_type='xywh', # iou
                  train_cfg=None,
                  test_cfg=None):
         super(YOLOV4Head, self).__init__()
@@ -105,11 +105,12 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
         self.loss_cls = build_loss(loss_cls)
         self.loss_conf = build_loss(loss_conf)
         self.loss_bbox_type = loss_bbox_type
-        if self.loss_bbox_type == 'iou':
-            self.loss_bbox = build_loss(loss_iou)
-        else:
+        if self.loss_bbox_type == 'xywh':
             self.loss_xy = build_loss(loss_xy)
             self.loss_wh = build_loss(loss_wh)
+        elif self.loss_bbox_type == 'iou':
+            self.loss_bbox = build_loss(loss_iou)
+        
         # usually the numbers of anchors for each level are the same
         # except SSD detectors
         self.num_anchors = self.anchor_generator.num_base_anchors[0]
@@ -354,11 +355,12 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
             loss_cls=losses[0],
             loss_conf=losses[1],
         )
-        if self.loss_bbox_type == 'iou':
-            outs['loss_bbox'] = losses[-1]
-        else:
+        if self.loss_bbox_type == 'xywh':
             outs['loss_xy'] = losses[-2]
             outs['loss_wh'] = losses[-1]
+            # TODO: add them is OK ?
+        elif self.loss_bbox_type == 'iou':
+            outs['loss_bbox'] = losses[-1]
         return outs
 
     def loss_single(self, pred_map, target_map, neg_map, anchors, bbox_gt_for_iou, stride):
@@ -400,14 +402,7 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
         
         outs = [loss_cls, loss_conf]
         
-        if self.loss_bbox_type == 'iou':
-            # iou loss
-            bbox_gt_for_iou = bbox_gt_for_iou.reshape(-1, 4).contiguous()
-            anchors = anchors.reshape(-1, 4)
-            bbox_pred_iou = self.bbox_coder.decode(anchors, bbox_pred)
-            loss_iou = self.loss_iou(bbox_pred_iou, bbox_gt_for_iou, bbox_weights)
-            outs.append(loss_iou)
-        else:
+        if self.loss_bbox_type == 'xywh':
             # xy,wh loss
             pred_xy = pred_map[..., :2]
             pred_wh = pred_map[..., 2:4]
@@ -416,6 +411,14 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
             loss_xy = self.loss_xy(pred_xy, target_xy, weight=pos_mask)
             loss_wh = self.loss_wh(pred_wh, target_wh, weight=pos_mask)
             outs.extend([loss_xy, loss_wh])
+        elif self.loss_bbox_type == 'iou':
+            # iou loss
+            bbox_gt_for_iou = bbox_gt_for_iou.reshape(-1, 4).contiguous()
+            anchors = anchors.reshape(-1, 4)
+            bbox_pred_iou = self.bbox_coder.decode(anchors, bbox_pred)
+            loss_iou = self.loss_iou(bbox_pred_iou, bbox_gt_for_iou, bbox_weights)
+            outs.append(loss_iou)
+            
         return outs 
 
     def get_targets(self, anchor_list, responsible_flag_list, gt_bboxes_list, gt_labels_list):
