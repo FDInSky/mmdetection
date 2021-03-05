@@ -14,20 +14,57 @@ model = dict(
     bbox_head=dict(
         type='YOLOV4Head',
         num_classes=80,
-        in_channels=[256, 512, 1024]
+        in_channels=[256, 512, 1024],
+        anchor_generator=dict(
+            type='YOLOAnchorGenerator',
+            base_sizes=[[(12, 16), (19, 36), (40, 28)],        # P3/8
+                        [(36, 75), (76, 55), (72, 146)],       # P4/16
+                        [(142, 110), (192, 243), (459, 401)]], # P5/32
+            strides=[8, 16, 32]),
+        bbox_coder=dict(type='YOLOBBoxCoder'),
+        featmap_strides=[8, 16, 32],
+        loss_cls=dict(
+            type='CrossEntropyLoss',
+            use_sigmoid=True,
+            loss_weight=1.0,
+            reduction='sum'),
+        loss_conf=dict(
+            type='CrossEntropyLoss',
+            use_sigmoid=True,
+            loss_weight=1.0,
+            reduction='sum'),
+        loss_xy=dict(
+            type='CrossEntropyLoss',
+            use_sigmoid=True,
+            loss_weight=2.0,
+            reduction='sum'),
+        loss_wh=dict(
+            type='MSELoss', 
+            loss_weight=2.0, 
+            reduction='sum')
     ),
     use_amp=True
 )
-train_cfg = dict()
-test_cfg = dict(
+# training and testing settings
+train_cfg=dict(
+    assigner=dict(
+        type='GridAssigner',
+        pos_iou_thr=0.5,
+        neg_iou_thr=0.5,
+        min_pos_iou=0
+    )
+)
+test_cfg=dict(
+    nms_pre=1000,
     min_bbox_size=0,
-    nms_pre=-1,
-    score_thr=0.001,
-    nms=dict(type='nms', iou_threshold=0.65),
-    max_per_img=300)
+    score_thr=0.05,
+    conf_thr=0.005,
+    nms=dict(type='nms', iou_threshold=0.5),
+    max_per_img=100
+)
 # Dataset
 dataset_type = 'CocoDataset'
-data_root = '/home/ai/data/zg_duan/new/'
+data_root = '/home/ai/data/coco/'
 img_norm_cfg = dict(
     mean=[114, 114, 114], std=[255, 255, 255], to_rgb=True)
 train_pipeline = [
@@ -101,22 +138,22 @@ test_pipeline = [
         ])
 ]
 data = dict(
-    samples_per_gpu=8,
-    workers_per_gpu=8,
+    samples_per_gpu=2,
+    workers_per_gpu=2,
     train=dict(
         type=dataset_type,
-        ann_file=data_root + 'annotations/instances_train2017.json',
-        img_prefix=data_root + 'train2017/',
+        ann_file=data_root + 'annotations/train.json',
+        img_prefix=data_root + 'images/train/',
         pipeline=train_pipeline),
     val=dict(
         type=dataset_type,
-        ann_file=data_root + 'annotations/instances_val2017.json',
-        img_prefix=data_root + 'val2017/',
+        ann_file=data_root + 'annotations/eval.json',
+        img_prefix=data_root + 'images/eval/',
         pipeline=test_pipeline),
     test=dict(
         type=dataset_type,
-        ann_file=data_root + 'annotations/instances_val2017.json',
-        img_prefix=data_root + 'val2017/',
+        ann_file=data_root + 'annotations/eval.json',
+        img_prefix=data_root + 'images/eval/',
         pipeline=test_pipeline)
 )
 # Optim

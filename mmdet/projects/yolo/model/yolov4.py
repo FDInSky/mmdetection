@@ -17,8 +17,8 @@ class YOLOV4(SingleStageDetector):
                  test_cfg=None,
                  pretrained=None,
                  use_amp=True):
-        super(YOLOV4, self).__init__(backbone, neck, bbox_head, train_cfg,
-                                     test_cfg, pretrained)
+        super(YOLOV4, self).__init__(
+            backbone, neck, bbox_head, train_cfg, test_cfg, pretrained)
         self.use_amp = use_amp
 
     def forward_train(self, *wargs, **kwargs):
