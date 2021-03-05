@@ -7,8 +7,8 @@ import mmcv
 from mmdet.core.visualization import imshow_det_bboxes
 from mmdet.core import bbox2result, merge_aug_bboxes
 from mmdet.models.builder import DETECTORS, build_backbone, build_head, build_neck
-from mmdet.models.utils.refine_feat import RefineFeat
-from mmdet.models.base import BaseDetector
+from mmdet.models.detectors.base import BaseDetector
+from .refine_feat import RefineFeat
 
 
 @DETECTORS.register_module()
@@ -71,13 +71,10 @@ class FCRNet(BaseDetector):
             self.refine_head_module[i].init_weights()
 
     def extract_feat(self, img):
-        # print("debug img: ", img.shape)
-        # torch.Size([8, 3, 224, 1344])
         x = self.backbone(img)
         if self.with_neck:
             x = self.neck(x)
-        # for i in x:
-            # print("debug fpn: ", i.shape)
+        
         return x
 
     def forward_train(self,

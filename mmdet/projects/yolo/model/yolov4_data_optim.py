@@ -369,8 +369,7 @@ class GtBBoxesFilter(object):
         w = bboxes[:, 2] - bboxes[:, 0]
         h = bboxes[:, 3] - bboxes[:, 1]
         ar = np.maximum(w / (h + 1e-16), h / (w + 1e-16))
-        valid = (w > self.min_size) & (
-                h > self.min_size) & (ar < self.max_aspect_ratio)
+        valid = (w > self.min_size) & (h > self.min_size) & (ar < self.max_aspect_ratio)
         results['gt_bboxes'] = bboxes[valid]
         results['gt_labels'] = labels[valid]
         return results
