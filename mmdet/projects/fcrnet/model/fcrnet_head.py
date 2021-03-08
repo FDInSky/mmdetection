@@ -273,9 +273,12 @@ class FCRHead(AnchorHead):
         
         # assign gt and sample anchors
         anchors = flat_anchors[inside_flags, :]
-        num_level_anchors_inside = self.get_num_level_anchors_inside(num_level_anchors, inside_flags)
-
-        assign_result = self.assigner.assign(anchors, num_level_anchors_inside, gt_bboxes, gt_bboxes_ignore, gt_labels)
+        if self.train_cfg.assigner.type in ['FCRAssigner', 'FCRAssignerV2']:
+        # if self.train_cfg.assigner.type == 'FCRAssigner':
+            num_level_anchors_inside = self.get_num_level_anchors_inside(num_level_anchors, inside_flags)
+            assign_result = self.assigner.assign(anchors, num_level_anchors_inside, gt_bboxes, gt_bboxes_ignore, gt_labels)
+        else:
+            assign_result = self.assigner.assign(anchors, gt_bboxes, gt_bboxes_ignore)
         sampling_result = self.sampler.sample(assign_result, anchors, gt_bboxes)
 
         num_valid_anchors = anchors.shape[0]
@@ -485,10 +488,13 @@ class FCRBinaryHead(FCRHead):
         
         # assign gt and sample anchors
         anchors = flat_anchors[inside_flags, :]
-        num_level_anchors_inside = self.get_num_level_anchors_inside(num_level_anchors, inside_flags)
-
-        # binary class 
-        assign_result = self.assigner.assign(anchors, num_level_anchors_inside, gt_bboxes, gt_bboxes_ignore, None)
+        if self.train_cfg.assigner.type in ['FCRAssigner', 'FCRAssignerV2']:
+        # if self.train_cfg.assigner.type == 'FCRAssigner':
+            num_level_anchors_inside = self.get_num_level_anchors_inside(num_level_anchors, inside_flags)
+            assign_result = self.assigner.assign(anchors, num_level_anchors_inside, gt_bboxes, gt_bboxes_ignore, gt_labels)
+        else:
+            assign_result = self.assigner.assign(anchors, gt_bboxes, gt_bboxes_ignore)
+        
         sampling_result = self.sampler.sample(assign_result, anchors, gt_bboxes)
 
         num_valid_anchors = anchors.shape[0]
@@ -520,9 +526,12 @@ class FCRBinaryHead(FCRHead):
             if self.train_cfg.pos_weight <= 0:
                 label_weights[pos_inds] = 1 + relative_num_diff
             else:
-                label_weights[pos_inds] = self.train_cfg.pos_weight
+                label_weights[pos_inds] = self.train_cfg.pos_weight # default is 1.0
         if len(neg_inds) > 0:
-            label_weights[neg_inds] = 1 - relative_num_diff
+            if self.train_cfg.pos_weight <= 0:
+                label_weights[neg_inds] = 1 - relative_num_diff
+            else:
+                label_weights[neg_inds] = 0.0 # default is 0.0
 
         # map up to original set of anchors
         if unmap_outputs:

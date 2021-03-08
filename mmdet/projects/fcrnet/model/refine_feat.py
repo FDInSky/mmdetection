@@ -10,7 +10,8 @@ class ROIDCN(nn.Module):
                  out_channels,
                  deform_groups=1,
                  kernel_size=3,
-                 offset_type='bbox2offset'
+                 offset_type='bbox2offset',
+                 use_score=True,
                  ):
         super(ROIDCN, self).__init__()
         self.kernel_size = kernel_size
@@ -25,6 +26,7 @@ class ROIDCN(nn.Module):
         self.offset_type = offset_type
         if offset_type == 'feat2offset':
             self.conv_offset = nn.Conv2d(in_channels, self.kernel_size ** 2 * 2, 1, bias=False)
+        self.use_score = use_score
 
     def init_weights(self):
         normal_init(self.deform_conv, std=0.01)
@@ -32,11 +34,8 @@ class ROIDCN(nn.Module):
     def forward(self, x, bboxes, stride, scores):
         if self.offset_type == 'bbox2offset':
             offset = self.bbox2offset(bboxes, self.kernel_size, stride, scores)
-            # print("debug1: ", x.shape, offset.shape)
-            # torch.Size([4, 256, 2, 11]) torch.Size([4, 18, 2, 11])
         elif self.offset_type == 'feat2offset':
             offset = self.conv_offset(x)
-
         x = self.relu(self.deform_conv(x, offset))
         return x
 
@@ -48,8 +47,6 @@ class ROIDCN(nn.Module):
             bbox = bboxes[i].reshape(-1, 4)  #(NA, 4)
             score = scores[i].reshape(-1, 1)
             offset = self.bbox2offset_single(bbox, kernel_size, featmap_size, stride, score)
-            # print("debug offset: ", offset.shape)
-            # debug offset:  torch.Size([4704, 9, 2])
             offset = offset.reshape(bbox.size(0), -1).permute(1, 0).reshape(-1, H, W) # [2*ks**2,H,W]
             offset_list.append(offset)
         offset_tensor = torch.stack(offset_list, dim=0)
@@ -74,8 +71,6 @@ class ROIDCN(nn.Module):
         yc = yc.reshape(-1)
         x_conv = xc[:, None] + xx
         y_conv = yc[:, None] + yy
-        # print("debug: ", xx.shape, yy.shape, xc.shape, yc.shape, x_conv.shape, y_conv.shape)
-        # debug:  torch.Size([9]) torch.Size([9]) torch.Size([4704]) torch.Size([4704]) torch.Size([4704, 9]) torch.Size([4704, 9])
         
         # get sampling locations of bboxes
         # TODO: optim 1rst stage box encode method
@@ -98,16 +93,18 @@ class ROIDCN(nn.Module):
         # get offset filed between box_center and conv_center
         offset_x = x_bbox - x_conv
         offset_y = y_bbox - y_conv
-        # print("offset xy: ", offset_x.shape, offset_y.shape)
 
-        # do weight
-        offset_x = offset_x * score
-        offset_y = offset_y * score
+        # add weight
+        if self.use_score:
+            offset_x = offset_x * score
+            offset_y = offset_y * score
+
         # x, y in bboxes is opposite in image coordinates,
         # so we stack them with y, x other than x, y
         offset = torch.stack([offset_y, offset_x], dim=-1)
         
         return offset
+
 
 class RefineFeat(nn.Module):
     def __init__(
@@ -115,12 +112,16 @@ class RefineFeat(nn.Module):
             in_channels,
             featmap_strides,
             deform_groups=1,
+            use_score=True,
+            repeat=1,
             conv_cfg=None,
             norm_cfg=None):
         super(RefineFeat, self).__init__()
         self.in_channels = in_channels
         self.featmap_strides = featmap_strides
         self.deform_groups = deform_groups
+        self.use_score = use_score
+        self.repeat = repeat
         self.conv_cfg = conv_cfg
         self.norm_cfg = norm_cfg
         self._init_layers()
@@ -140,11 +141,11 @@ class RefineFeat(nn.Module):
         outs = []
         for roi_dcn, x_scale, roi, score, f_stride in zip(self.mlvl_roi_dcn, x, mlvl_rois, mlvl_scores, self.featmap_strides):
             N, C, H, W = x_scale.shape
-            # print("debug feat adapt: ", x_scale.shape, roi.shape, score.shape)
             roi = roi.view(N, H, W, 4)
-            # align feat
-            refined_feat = roi_dcn(x_scale, roi, f_stride, score)
-            outs.append(refined_feat)
+            # refine feat like roi_align
+            for i in range(self.repeat):
+                x_scale = roi_dcn(x_scale, roi, f_stride, score)
+            outs.append(x_scale)
 
         return outs
 

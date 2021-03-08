@@ -19,6 +19,7 @@ class FCRNet(BaseDetector):
                  bbox_head=None,
                  refine_feats=None,
                  refine_heads=None,
+                 share_refine_feat=True,
                  train_cfg=None,
                  test_cfg=None,
                  pretrained=None):
@@ -50,6 +51,7 @@ class FCRNet(BaseDetector):
             self.refine_head_module.append(build_head(refine_head))
 
         # train and test cfg
+        self.share_refine_feat = share_refine_feat
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
         # init
@@ -98,10 +100,17 @@ class FCRNet(BaseDetector):
         rois, rois_scores = self.bbox_head.filter_bboxes(*outs[:2])
         for i in range(self.num_refine_heads):
             # refine feat
-            for j in range(self.num_refine_feats):
-                x = self.refine_feat_module[j](x, rois, rois_scores)
+            # for j in range(self.num_refine_feats):
+            if self.share_refine_feat:
+                if i == 0 :
+                    x_ = x 
+                else:
+                    x_ = x_r
+            else:
+                x_ = x
+            x_r = self.refine_feat_module[i](x_, rois, rois_scores)
             # refine head
-            outs = self.refine_head_module[i](x)
+            outs = self.refine_head_module[i](x_r)
             # refine loss
             loss_inputs = outs + (gt_bboxes, gt_labels, img_metas)
             loss_refine = self.refine_head_module[i].loss(
@@ -135,8 +144,8 @@ class FCRNet(BaseDetector):
             nfh = 1
         for i in range(nfh):
             # refine feat
-            for j in range(self.num_refine_feats):
-                x = self.refine_feat_module[j](x, rois, rois_scores)
+            # for j in range(self.num_refine_feats):
+            x = self.refine_feat_module[i](x, rois, rois_scores)
             # refine head
             outs = self.refine_head_module[i](x)
             # refine rois
