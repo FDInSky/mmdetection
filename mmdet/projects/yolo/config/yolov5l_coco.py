@@ -41,7 +41,11 @@ model = dict(
         loss_wh=dict(
             type='MSELoss', 
             loss_weight=2.0, 
-            reduction='sum')
+            reduction='sum'),
+        loss_iou=dict(
+            type='CIoULoss',
+            loss_weight=0.05),
+        loss_bbox_type='iou', # xywh
     ),
     use_amp=True
 )

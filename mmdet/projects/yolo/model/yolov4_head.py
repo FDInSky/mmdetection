@@ -109,7 +109,7 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
             self.loss_xy = build_loss(loss_xy)
             self.loss_wh = build_loss(loss_wh)
         elif self.loss_bbox_type == 'iou':
-            self.loss_bbox = build_loss(loss_iou)
+            self.loss_iou = build_loss(loss_iou)
         
         # usually the numbers of anchors for each level are the same
         # except SSD detectors
@@ -159,6 +159,219 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
             pred_maps.append(pred_map)
 
         return tuple(pred_maps),
+
+    @force_fp32(apply_to=('pred_maps', ))
+    def loss(self,
+             pred_maps,
+             gt_bboxes,
+             gt_labels,
+             img_metas,
+             gt_bboxes_ignore=None):
+        """Compute loss of the head.
+
+        Args:
+            pred_maps (list[Tensor]): Prediction map for each scale level,
+                shape (N, num_anchors * num_attrib, H, W)
+            gt_bboxes (list[Tensor]): Ground truth bboxes for each image with
+                shape (num_gts, 4) in [tl_x, tl_y, br_x, br_y] format.
+            gt_labels (list[Tensor]): class indices corresponding to each box
+            img_metas (list[dict]): Meta information of each image, e.g.,
+                image size, scaling factor, etc.
+            gt_bboxes_ignore (None | list[Tensor]): specify which bounding
+                boxes can be ignored when computing the loss.
+
+        Returns:
+            dict[str, Tensor]: A dictionary of loss components.
+        """
+        num_imgs = len(img_metas)
+        device = pred_maps[0][0].device
+
+        featmap_sizes = [pred_maps[i].shape[-2:] for i in range(self.num_levels)]
+        multi_level_anchors = self.anchor_generator.grid_anchors(featmap_sizes, device)
+        anchor_list = [multi_level_anchors for _ in range(num_imgs)]
+
+        responsible_flag_list = []
+        for img_id in range(len(img_metas)):
+            responsible_flag_list.append(
+                self.anchor_generator.responsible_flags(featmap_sizes, gt_bboxes[img_id], device))
+
+        target_maps_list, neg_maps_list, all_anchor_list, bbox_gt_for_iou_list, bbox_weights_list = self.get_targets(
+            anchor_list, responsible_flag_list, gt_bboxes, gt_labels)
+
+        losses = multi_apply(
+            self.loss_single, 
+            pred_maps, target_maps_list, neg_maps_list, all_anchor_list, bbox_gt_for_iou_list, bbox_weights_list, self.featmap_strides)
+
+        outs = dict(
+            loss_cls=losses[0],
+            loss_conf=losses[1],
+        )
+        if self.loss_bbox_type == 'xywh':
+            outs['loss_xy'] = losses[-2]
+            outs['loss_wh'] = losses[-1]
+            # TODO: add them is OK ?
+        elif self.loss_bbox_type == 'iou':
+            outs['loss_bbox'] = losses[-1]
+        return outs
+
+    def loss_single(self, pred_map, target_map, neg_map, anchors, bbox_gt_for_iou, bbox_weights, stride):
+        """Compute loss of a single image from a batch.
+
+        Args:
+            pred_map (Tensor): Raw predictions for a single level.
+            target_map (Tensor): The Ground-Truth target for a single level.
+            neg_map (Tensor): The negative masks for a single level.
+
+        Returns:
+            tuple:
+                loss_cls (Tensor): Classification loss.
+                loss_conf (Tensor): Confidence loss.
+                loss_xy (Tensor): Regression loss of x, y coordinate.
+                loss_wh (Tensor): Regression loss of w, h coordinate.
+        """
+
+        num_imgs = len(pred_map)
+        pred_map = pred_map.permute(0, 2, 3, 1).reshape(num_imgs, -1, self.num_attrib)
+
+        neg_mask = neg_map.float()
+        pos_mask = target_map[..., 4]
+        pos_and_neg_mask = neg_mask + pos_mask
+        pos_mask = pos_mask.unsqueeze(dim=-1)
+        if torch.max(pos_and_neg_mask) > 1.:
+            warnings.warn('There is overlap between pos and neg sample.')
+            pos_and_neg_mask = pos_and_neg_mask.clamp(min=0., max=1.)
+
+        # cls loss
+        pred_label = pred_map[..., 5:]
+        target_label = target_map[..., 5:self.num_attrib]
+        loss_cls = self.loss_cls(pred_label, target_label, weight=pos_mask)
+        # conf loss
+        pred_conf = pred_map[..., 4]
+        target_conf = target_map[..., 4]
+        loss_conf = self.loss_conf(pred_conf, target_conf, weight=pos_and_neg_mask)
+        # out
+        outs = [loss_cls, loss_conf]
+        
+        if self.loss_bbox_type == 'xywh':
+            # xy & wh loss
+            pred_xy = pred_map[..., :2]
+            pred_wh = pred_map[..., 2:4]
+            target_xy = target_map[..., :2]
+            target_wh = target_map[..., 2:4]
+            loss_xy = self.loss_xy(pred_xy, target_xy, weight=pos_mask)
+            loss_wh = self.loss_wh(pred_wh, target_wh, weight=pos_mask)
+            outs.extend([loss_xy, loss_wh])
+        elif self.loss_bbox_type == 'iou':
+            # iou loss
+            bbox_gt_for_iou = bbox_gt_for_iou.reshape(-1, 4).contiguous()
+            anchors = anchors.reshape(-1, 4)
+            bbox_pred = pred_map[..., :4].reshape(-1, 4)
+            bbox_weights = bbox_weights.reshape(-1, 4)
+            # print("debug iou loss: ", anchors.shape, bbox_pred.shape, bbox_weights.shape)
+            bbox_pred_iou = self.bbox_coder.decode(anchors, bbox_pred, stride)
+            loss_iou = self.loss_iou(bbox_pred_iou, bbox_gt_for_iou, bbox_weights)
+            outs.append(loss_iou)
+            
+        return outs 
+
+    def get_targets(self, anchor_list, responsible_flag_list, gt_bboxes_list, gt_labels_list):
+        """Compute target maps for anchors in multiple images.
+
+        Args:
+            anchor_list (list[list[Tensor]]): Multi level anchors of each
+                image. The outer list indicates images, and the inner list
+                corresponds to feature levels of the image. Each element of
+                the inner list is a tensor of shape (num_total_anchors, 4).
+            responsible_flag_list (list[list[Tensor]]): Multi level responsible
+                flags of each image. Each element is a tensor of shape
+                (num_total_anchors, )
+            gt_bboxes_list (list[Tensor]): Ground truth bboxes of each image.
+            gt_labels_list (list[Tensor]): Ground truth labels of each box.
+
+        Returns:
+            tuple: Usually returns a tuple containing learning targets.
+                - target_map_list (list[Tensor]): Target map of each level.
+                - neg_map_list (list[Tensor]): Negative map of each level.
+        """
+        num_imgs = len(anchor_list)
+
+        # anchor number of multi levels
+        num_level_anchors = [anchors.size(0) for anchors in anchor_list[0]]
+        # concat all level anchors and flags to a single tensor
+        concat_anchor_list = []
+        for i in range(len(anchor_list)):
+            concat_anchor_list.append(torch.cat(anchor_list[i]))
+        all_anchor_list = images_to_levels(concat_anchor_list, num_level_anchors)
+
+        results = multi_apply(
+            self._get_targets_single, 
+            anchor_list, responsible_flag_list, gt_bboxes_list, gt_labels_list)
+
+        all_target_maps, all_neg_maps, all_bbox_gt_for_iou, all_bbox_weights = results
+        assert num_imgs == len(all_target_maps) == len(all_neg_maps)
+        target_maps_list = images_to_levels(all_target_maps, num_level_anchors)
+        neg_maps_list = images_to_levels(all_neg_maps, num_level_anchors)
+        bbox_gt_for_iou_list = images_to_levels(all_bbox_gt_for_iou, num_level_anchors)
+        bbox_weights_list = images_to_levels(all_bbox_weights, num_level_anchors)
+
+        return target_maps_list, neg_maps_list, all_anchor_list, bbox_gt_for_iou_list, bbox_weights_list
+
+    def _get_targets_single(self, anchors, responsible_flags, gt_bboxes, gt_labels):
+        """Generate matching bounding box prior and converted GT.
+
+        Args:
+            anchors (list[Tensor]): Multi-level anchors of the image.
+            responsible_flags (list[Tensor]): Multi-level responsible flags of
+                anchors
+            gt_bboxes (Tensor): Ground truth bboxes of single image.
+            gt_labels (Tensor): Ground truth labels of single image.
+
+        Returns:
+            tuple:
+                target_map (Tensor): Predication target map of each
+                    scale level, shape (num_total_anchors,
+                    5+num_classes)
+                neg_map (Tensor): Negative map of each scale level,
+                    shape (num_total_anchors,)
+        """
+
+        anchor_strides = []
+        for i in range(len(anchors)):
+            anchor_strides.append(torch.tensor(self.featmap_strides[i], device=gt_bboxes.device).repeat(len(anchors[i])))
+        concat_anchors = torch.cat(anchors)
+        concat_responsible_flags = torch.cat(responsible_flags)
+
+        anchor_strides = torch.cat(anchor_strides)
+        assert len(anchor_strides) == len(concat_anchors) == len(concat_responsible_flags)
+
+        assign_result = self.assigner.assign(concat_anchors, concat_responsible_flags, gt_bboxes)
+        sampling_result = self.sampler.sample(assign_result, concat_anchors, gt_bboxes)
+
+        pos_inds = sampling_result.pos_inds
+        target_map = concat_anchors.new_zeros(concat_anchors.size(0), self.num_attrib)
+        # ctr_x, ctr_y, w, h
+        target_map[pos_inds, :4] = self.bbox_coder.encode(
+            sampling_result.pos_bboxes, sampling_result.pos_gt_bboxes, anchor_strides[sampling_result.pos_inds]
+        )
+        # conf
+        target_map[pos_inds, 4] = 1
+        # label
+        gt_labels_one_hot = F.one_hot(gt_labels, num_classes=self.num_classes).float()
+        if self.one_hot_smoother != 0:  # label smooth
+            gt_labels_one_hot = gt_labels_one_hot * (1 - self.one_hot_smoother) + self.one_hot_smoother / self.num_classes
+        target_map[pos_inds, 5:self.num_attrib] = gt_labels_one_hot[sampling_result.pos_assigned_gt_inds]
+        
+        neg_map = concat_anchors.new_zeros(concat_anchors.size(0), dtype=torch.uint8)
+        neg_map[sampling_result.neg_inds] = 1
+
+        # for iou
+        bbox_gt_for_iou = torch.zeros_like(concat_anchors)
+        bbox_weights = torch.zeros_like(concat_anchors)
+        if len(pos_inds) > 0:
+            bbox_gt_for_iou[pos_inds, :] = sampling_result.pos_gt_bboxes.float()
+            bbox_weights[pos_inds, :] = 1.0
+
+        return target_map, neg_map, bbox_gt_for_iou, bbox_weights
 
     @force_fp32(apply_to=('pred_maps', ))
     def get_bboxes(self,
@@ -308,214 +521,6 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
         else:
             return (multi_lvl_bboxes, multi_lvl_cls_scores,
                     multi_lvl_conf_scores)
-
-    @force_fp32(apply_to=('pred_maps', ))
-    def loss(self,
-             pred_maps,
-             gt_bboxes,
-             gt_labels,
-             img_metas,
-             gt_bboxes_ignore=None):
-        """Compute loss of the head.
-
-        Args:
-            pred_maps (list[Tensor]): Prediction map for each scale level,
-                shape (N, num_anchors * num_attrib, H, W)
-            gt_bboxes (list[Tensor]): Ground truth bboxes for each image with
-                shape (num_gts, 4) in [tl_x, tl_y, br_x, br_y] format.
-            gt_labels (list[Tensor]): class indices corresponding to each box
-            img_metas (list[dict]): Meta information of each image, e.g.,
-                image size, scaling factor, etc.
-            gt_bboxes_ignore (None | list[Tensor]): specify which bounding
-                boxes can be ignored when computing the loss.
-
-        Returns:
-            dict[str, Tensor]: A dictionary of loss components.
-        """
-        num_imgs = len(img_metas)
-        device = pred_maps[0][0].device
-
-        featmap_sizes = [pred_maps[i].shape[-2:] for i in range(self.num_levels)]
-        multi_level_anchors = self.anchor_generator.grid_anchors(featmap_sizes, device)
-        anchor_list = [multi_level_anchors for _ in range(num_imgs)]
-
-        responsible_flag_list = []
-        for img_id in range(len(img_metas)):
-            responsible_flag_list.append(
-                self.anchor_generator.responsible_flags(featmap_sizes, gt_bboxes[img_id], device))
-
-        target_maps_list, neg_maps_list, all_anchors_list, bbox_gt_for_iou_list = self.get_targets(
-            anchor_list, responsible_flag_list, gt_bboxes, gt_labels)
-
-        losses = multi_apply(
-            self.loss_single, 
-            pred_maps, target_maps_list, neg_maps_list, all_anchor_list, bbox_gt_for_iou_list, self.featmap_strides)
-
-        outs = dict(
-            loss_cls=losses[0],
-            loss_conf=losses[1],
-        )
-        if self.loss_bbox_type == 'xywh':
-            outs['loss_xy'] = losses[-2]
-            outs['loss_wh'] = losses[-1]
-            # TODO: add them is OK ?
-        elif self.loss_bbox_type == 'iou':
-            outs['loss_bbox'] = losses[-1]
-        return outs
-
-    def loss_single(self, pred_map, target_map, neg_map, anchors, bbox_gt_for_iou, stride):
-        """Compute loss of a single image from a batch.
-
-        Args:
-            pred_map (Tensor): Raw predictions for a single level.
-            target_map (Tensor): The Ground-Truth target for a single level.
-            neg_map (Tensor): The negative masks for a single level.
-
-        Returns:
-            tuple:
-                loss_cls (Tensor): Classification loss.
-                loss_conf (Tensor): Confidence loss.
-                loss_xy (Tensor): Regression loss of x, y coordinate.
-                loss_wh (Tensor): Regression loss of w, h coordinate.
-        """
-
-        num_imgs = len(pred_map)
-        pred_map = pred_map.permute(0, 2, 3, 1).reshape(num_imgs, -1, self.num_attrib)
-
-        neg_mask = neg_map.float()
-        pos_mask = target_map[..., 4]
-        pos_and_neg_mask = neg_mask + pos_mask
-        pos_mask = pos_mask.unsqueeze(dim=-1)
-        if torch.max(pos_and_neg_mask) > 1.:
-            warnings.warn('There is overlap between pos and neg sample.')
-            pos_and_neg_mask = pos_and_neg_mask.clamp(min=0., max=1.)
-
-        # cls loss
-        pred_label = pred_map[..., 5:]
-        target_label = target_map[..., 5:self.num_attrib]
-        loss_cls = self.loss_cls(pred_label, target_label, weight=pos_mask)
-
-        # conf loss
-        pred_conf = pred_map[..., 4]
-        target_conf = target_map[..., 4]
-        loss_conf = self.loss_conf(pred_conf, target_conf, weight=pos_and_neg_mask)
-        
-        outs = [loss_cls, loss_conf]
-        
-        if self.loss_bbox_type == 'xywh':
-            # xy,wh loss
-            pred_xy = pred_map[..., :2]
-            pred_wh = pred_map[..., 2:4]
-            target_xy = target_map[..., :2]
-            target_wh = target_map[..., 2:4]
-            loss_xy = self.loss_xy(pred_xy, target_xy, weight=pos_mask)
-            loss_wh = self.loss_wh(pred_wh, target_wh, weight=pos_mask)
-            outs.extend([loss_xy, loss_wh])
-        elif self.loss_bbox_type == 'iou':
-            # iou loss
-            bbox_gt_for_iou = bbox_gt_for_iou.reshape(-1, 4).contiguous()
-            anchors = anchors.reshape(-1, 4)
-            bbox_pred_iou = self.bbox_coder.decode(anchors, bbox_pred)
-            loss_iou = self.loss_iou(bbox_pred_iou, bbox_gt_for_iou, bbox_weights)
-            outs.append(loss_iou)
-            
-        return outs 
-
-    def get_targets(self, anchor_list, responsible_flag_list, gt_bboxes_list, gt_labels_list):
-        """Compute target maps for anchors in multiple images.
-
-        Args:
-            anchor_list (list[list[Tensor]]): Multi level anchors of each
-                image. The outer list indicates images, and the inner list
-                corresponds to feature levels of the image. Each element of
-                the inner list is a tensor of shape (num_total_anchors, 4).
-            responsible_flag_list (list[list[Tensor]]): Multi level responsible
-                flags of each image. Each element is a tensor of shape
-                (num_total_anchors, )
-            gt_bboxes_list (list[Tensor]): Ground truth bboxes of each image.
-            gt_labels_list (list[Tensor]): Ground truth labels of each box.
-
-        Returns:
-            tuple: Usually returns a tuple containing learning targets.
-                - target_map_list (list[Tensor]): Target map of each level.
-                - neg_map_list (list[Tensor]): Negative map of each level.
-        """
-        num_imgs = len(anchor_list)
-
-        # anchor number of multi levels
-        num_level_anchors = [anchors.size(0) for anchors in anchor_list[0]]
-        # concat all level anchors and flags to a single tensor
-        concat_anchor_list = []
-        for i in range(len(anchor_list)):
-            concat_anchor_list.append(torch.cat(anchor_list[i]))
-        all_anchor_list = images_to_levels(concat_anchor_list, num_level_anchors)
-
-        results = multi_apply(
-            self._get_targets_single, 
-            anchor_list, responsible_flag_list, gt_bboxes_list, gt_labels_list)
-
-        all_target_maps, all_neg_maps, all_bbox_gt_for_iou = results
-        assert num_imgs == len(all_target_maps) == len(all_neg_maps)
-        target_maps_list = images_to_levels(all_target_maps, num_level_anchors)
-        neg_maps_list = images_to_levels(all_neg_maps, num_level_anchors)
-        bbox_gt_for_iou_list = images_to_levels(all_bbox_gt_for_iou, num_level_anchors)
-        
-        return target_maps_list, neg_maps_list, all_anchor_list, bbox_gt_for_iou_list
-
-    def _get_targets_single(self, anchors, responsible_flags, gt_bboxes, gt_labels):
-        """Generate matching bounding box prior and converted GT.
-
-        Args:
-            anchors (list[Tensor]): Multi-level anchors of the image.
-            responsible_flags (list[Tensor]): Multi-level responsible flags of
-                anchors
-            gt_bboxes (Tensor): Ground truth bboxes of single image.
-            gt_labels (Tensor): Ground truth labels of single image.
-
-        Returns:
-            tuple:
-                target_map (Tensor): Predication target map of each
-                    scale level, shape (num_total_anchors,
-                    5+num_classes)
-                neg_map (Tensor): Negative map of each scale level,
-                    shape (num_total_anchors,)
-        """
-
-        anchor_strides = []
-        for i in range(len(anchors)):
-            anchor_strides.append(
-                torch.tensor(self.featmap_strides[i], device=gt_bboxes.device).repeat(len(anchors[i])))
-        concat_anchors = torch.cat(anchors)
-        concat_responsible_flags = torch.cat(responsible_flags)
-
-        anchor_strides = torch.cat(anchor_strides)
-        assert len(anchor_strides) == len(concat_anchors) == len(concat_responsible_flags)
-
-        assign_result = self.assigner.assign(concat_anchors, concat_responsible_flags, gt_bboxes)
-        sampling_result = self.sampler.sample(assign_result, concat_anchors, gt_bboxes)
-
-        pos_inds = sampling_result.pos_inds
-        target_map = concat_anchors.new_zeros(concat_anchors.size(0), self.num_attrib)
-        # ctr_x, ctr_y, w, h
-        target_map[pos_inds, :4] = self.bbox_coder.encode(
-            sampling_result.pos_bboxes, sampling_result.pos_gt_bboxes, anchor_strides[sampling_result.pos_inds]
-        )
-        # conf
-        target_map[pos_inds, 4] = 1
-        # label
-        gt_labels_one_hot = F.one_hot(gt_labels, num_classes=self.num_classes).float()
-        if self.one_hot_smoother != 0:  # label smooth
-            gt_labels_one_hot = gt_labels_one_hot * (1 - self.one_hot_smoother) + self.one_hot_smoother / self.num_classes
-        target_map[pos_inds, 5:self.num_attrib] = gt_labels_one_hot[sampling_result.pos_assigned_gt_inds]
-        
-        neg_map = concat_anchors.new_zeros(concat_anchors.size(0), dtype=torch.uint8)
-        neg_map[sampling_result.neg_inds] = 1
-
-        bbox_gt_for_iou = concat_anchors.new_zeros(concat_anchors.size(0), dtype=torch.uint8)
-        if len(pos_inds) > 0:
-            bbox_gt_for_iou[pos_inds, :] = sampling_result.pos_gt_bboxes.float()
-
-        return target_map, neg_map, bbox_gt_for_iou
 
     def aug_test(self, feats, img_metas, rescale=False):
         """Test function with test time augmentation.
