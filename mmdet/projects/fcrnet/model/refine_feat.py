@@ -36,6 +36,7 @@ class ROIDCN(nn.Module):
             offset = self.bbox2offset(bboxes, self.kernel_size, stride, scores)
         elif self.offset_type == 'feat2offset':
             offset = self.conv_offset(x)
+        
         x = self.relu(self.deform_conv(x, offset))
         return x
 

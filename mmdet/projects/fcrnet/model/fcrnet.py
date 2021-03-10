@@ -3,6 +3,7 @@ import warnings
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.cuda.amp import autocast
 import mmcv
 from mmdet.core.visualization import imshow_det_bboxes
 from mmdet.core import bbox2result, merge_aug_bboxes
@@ -22,7 +23,8 @@ class FCRNet(BaseDetector):
                  share_refine_feat=True,
                  train_cfg=None,
                  test_cfg=None,
-                 pretrained=None):
+                 pretrained=None,
+                 use_amp=False):
         super(FCRNet, self).__init__()
         # backbone 
         self.backbone = build_backbone(backbone)
@@ -54,6 +56,7 @@ class FCRNet(BaseDetector):
         self.share_refine_feat = share_refine_feat
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
+        self.use_amp = use_amp
         # init
         self.init_weights(pretrained=pretrained)
 
@@ -80,6 +83,28 @@ class FCRNet(BaseDetector):
         return x
 
     def forward_train(self,
+                      img,
+                      img_metas,
+                      gt_bboxes,
+                      gt_labels,
+                      gt_bboxes_ignore=None):
+        if self.use_amp:
+            with autocast():
+                return self._forward_train(img, img_metas, gt_bboxes, gt_labels, gt_bboxes_ignore)
+        else:
+            return self._forward_train(img, img_metas, gt_bboxes, gt_labels, gt_bboxes_ignore)
+    
+    def simple_test(self,
+                    img,
+                    img_meta,
+                    rescale=False):
+        if self.use_amp:
+            with autocast():
+                return self._simple_test(img, img_meta, rescale)
+        else:
+            return self._simple_test(img, img_meta, rescale)
+
+    def _forward_train(self,
                       img,
                       img_metas,
                       gt_bboxes,
@@ -125,7 +150,7 @@ class FCRNet(BaseDetector):
 
         return losses
 
-    def simple_test(self,
+    def _simple_test(self,
                     img,
                     img_meta,
                     rescale=False):
