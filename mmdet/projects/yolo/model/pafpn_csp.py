@@ -8,7 +8,7 @@ from .base_module import Conv, CSP2, CSP3, ConvList
 
 
 @NECKS.register_module()
-class YOLOV4PAFPNCSP(nn.Module):
+class PAFPNYOLOV4(nn.Module):
     """Path Aggregation Network for Instance Segmentation.
 
     This is an implementation of the `PAFPN in Path Aggregation Network
@@ -47,7 +47,7 @@ class YOLOV4PAFPNCSP(nn.Module):
                  act_cfg=dict(type='Mish'),
                  csp_act_cfg=dict(type='Mish'),
                  upsample_cfg=dict(mode='nearest')):
-        super(YOLOV4PAFPNCSP, self).__init__()
+        super(PAFPNYOLOV4, self).__init__()
 
         assert isinstance(in_channels, list)
         self.in_channels = in_channels
@@ -130,10 +130,10 @@ class YOLOV4PAFPNCSP(nn.Module):
         # output conv
         self.out_convs = nn.ModuleList()
         for i in range(num_outs):
-            before_conv_channels = self.in_channels[self.start_level + i] // 2
+            in_c = self.in_channels[self.start_level + i] // 2
             out_channels = self.out_channels[i]
             out_conv = Conv(
-                in_channels=before_conv_channels,
+                in_channels=in_c,
                 out_channels=out_channels,
                 kernel_size=3,
                 **cfg
@@ -152,6 +152,7 @@ class YOLOV4PAFPNCSP(nn.Module):
         used_backbone_levels = self.backbone_end_level - self.start_level
 
         # build top-down path
+        # P5 -> P4 -> P3
         x = inputs[self.backbone_end_level - 1]
         bottom_up_merge = []
         for i in range(used_backbone_levels - 1, 0, -1):
@@ -174,6 +175,7 @@ class YOLOV4PAFPNCSP(nn.Module):
             x = post_conv(x)
 
         # build bottom-up path
+        # P3 -> P4 -> P5
         outs = [x]
         for i in range(self.backbone_end_level - self.start_level - 1):
             down_conv = self.bottom_up_convs[i]
@@ -184,9 +186,9 @@ class YOLOV4PAFPNCSP(nn.Module):
             outs.append(x)
 
         # build output
+        # P3 -> P4 -> P5
         for i in range(len(outs)):
             outs[i] = self.out_convs[i](outs[i])
-
         return tuple(outs)
 
 
@@ -316,11 +318,11 @@ class PAFPNCSP(nn.Module):
         # output conv
         self.out_convs = nn.ModuleList()
         for i in range(num_outs):
-            before_conv_channels = self.in_channels[self.start_level + i]
-            out_channels = self.out_channels[i]
+            in_c = self.in_channels[self.start_level + i]
+            out_c = self.out_channels[i]
             out_conv = Conv(
-                in_channels=before_conv_channels,
-                out_channels=out_channels,
+                in_channels=in_c,
+                out_channels=out_c,
                 kernel_size=3,
                 **cfg
             )
@@ -338,6 +340,7 @@ class PAFPNCSP(nn.Module):
         used_backbone_levels = self.backbone_end_level - self.start_level
 
         # build top-down path
+        # P5 -> P4 -> P3
         x = inputs[self.backbone_end_level - 1]
         bottom_up_merge = []
         for i in range(used_backbone_levels - 1, 0, -1):  # [2, 1]
@@ -360,16 +363,21 @@ class PAFPNCSP(nn.Module):
             x = post_csp(x)
 
         # build bottom-up path
+        # P3 -> P4 -> P5
         outs = [x]
-        for i in range(self.backbone_end_level - self.start_level - 1):
+        for i in range(self.backbone_end_level - self.start_level - 1): # [0, 1]
             down_conv = self.bottom_up_convs[i]
             post_csp = self.bottom_up_csps[i]
+            # down sample
             x = down_conv(x)
+            # cat
             x = torch.cat((x, bottom_up_merge.pop(-1)), dim=1)
+            # csp
             x = post_csp(x)
             outs.append(x)
 
         # build output
+        # P3 -> P4 -> P5
         for i in range(len(outs)):
             outs[i] = self.out_convs[i](outs[i])
 

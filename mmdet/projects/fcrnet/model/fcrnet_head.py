@@ -139,7 +139,7 @@ class FCRHead(AnchorHead):
         if cls_reg_targets is None:
             return None
         (labels_list, label_weights_list, bbox_targets_list, bbox_weights_list,
-         num_total_pos, num_total_neg, bbox_targets_iou_list) = cls_reg_targets[:7]
+         num_total_pos, num_total_neg, bbox_gt_for_iou_list) = cls_reg_targets[:7]
         num_total_samples = (num_total_pos + num_total_neg if self.sampling else num_total_pos)
         # anchor number of multi levels
         num_level_anchors = [anchors.size(0) for anchors in anchor_list[0]]
@@ -156,13 +156,13 @@ class FCRHead(AnchorHead):
             labels_list,
             label_weights_list,
             bbox_targets_list,
-            bbox_targets_iou_list,
+            bbox_gt_for_iou_list,
             bbox_weights_list,
             num_total_samples=num_total_samples)
         return dict(loss_cls=losses_cls, loss_bbox=losses_bbox)
 
     def loss_single(self, cls_score, bbox_pred, anchors, labels, label_weights,
-                    bbox_targets, bbox_targets_iou, bbox_weights, num_total_samples):
+                    bbox_targets, bbox_gt_for_iou, bbox_weights, num_total_samples):
         # classification loss
         labels = labels.reshape(-1)
         label_weights = label_weights.reshape(-1).contiguous()
@@ -182,10 +182,10 @@ class FCRHead(AnchorHead):
         #     avg_factor=num_total_samples)
 
         # iou loss
-        bbox_targets_iou = bbox_targets_iou.reshape(-1, 4).contiguous()
+        bbox_gt_for_iou = bbox_gt_for_iou.reshape(-1, 4).contiguous()
         anchors = anchors.reshape(-1, 4)
         bbox_pred_iou = self.bbox_coder.decode(anchors, bbox_pred)
-        loss_iou = self.loss_iou(bbox_pred_iou, bbox_targets_iou, bbox_weights)
+        loss_iou = self.loss_iou(bbox_pred_iou, bbox_gt_for_iou, bbox_weights)
 
         return loss_cls, loss_iou
 
@@ -231,7 +231,7 @@ class FCRHead(AnchorHead):
             label_channels=label_channels,
             unmap_outputs=unmap_outputs)
         (all_labels, all_label_weights, all_bbox_targets, all_bbox_weights,
-         pos_inds_list, neg_inds_list, sampling_results_list, all_bbox_targets_iou) = results[:8]
+         pos_inds_list, neg_inds_list, sampling_results_list, all_bbox_gt_for_iou) = results[:8]
         rest_results = list(results[8:])  # user-added return values
         # no valid anchors
         if any([labels is None for labels in all_labels]):
@@ -243,10 +243,10 @@ class FCRHead(AnchorHead):
         labels_list = images_to_levels(all_labels, num_level_anchors)
         label_weights_list = images_to_levels(all_label_weights, num_level_anchors)
         bbox_targets_list = images_to_levels(all_bbox_targets, num_level_anchors)
-        bbox_targets_iou_list = images_to_levels(all_bbox_targets_iou, num_level_anchors)
+        bbox_gt_for_iou_list = images_to_levels(all_bbox_gt_for_iou, num_level_anchors)
         bbox_weights_list = images_to_levels(all_bbox_weights, num_level_anchors)
         res = (labels_list, label_weights_list, bbox_targets_list,
-               bbox_weights_list, num_total_pos, num_total_neg, bbox_targets_iou_list)
+               bbox_weights_list, num_total_pos, num_total_neg, bbox_gt_for_iou_list)
         if return_sampling_results:
             res = res + (sampling_results_list, )
         for i, r in enumerate(rest_results):  # user-added return values
@@ -283,7 +283,7 @@ class FCRHead(AnchorHead):
 
         num_valid_anchors = anchors.shape[0]
         bbox_targets = torch.zeros_like(anchors)
-        bbox_targets_iou = torch.zeros_like(anchors)
+        bbox_gt_for_iou = torch.zeros_like(anchors)
         bbox_weights = torch.zeros_like(anchors)
         labels = anchors.new_full((num_valid_anchors,), self.num_classes, dtype=torch.long)
         label_weights = anchors.new_zeros(num_valid_anchors, dtype=torch.float)
@@ -296,15 +296,17 @@ class FCRHead(AnchorHead):
         else:
             relative_num_diff = abs(len(neg_inds) - len(pos_inds)) / total_inds
         if len(pos_inds) > 0:
-            bbox_targets_iou[pos_inds, :] = sampling_result.pos_gt_bboxes.float()
+            # bbox
             if not self.reg_decoded_bbox:
                 pos_bbox_targets = self.bbox_coder.encode(sampling_result.pos_bboxes, sampling_result.pos_gt_bboxes)
             else:
                 pos_bbox_targets = sampling_result.pos_gt_bboxes
-
             bbox_targets[pos_inds, :] = pos_bbox_targets
+            # bbox weights
             bbox_weights[pos_inds, :] = 1.0
-            
+            # bbox gt
+            bbox_gt_for_iou[pos_inds, :] = sampling_result.pos_gt_bboxes.float()
+            # bbox label
             if gt_labels is None:
                 # only rpn gives gt_labels as None, this time FG is 1
                 labels[pos_inds] = 1
@@ -327,9 +329,9 @@ class FCRHead(AnchorHead):
             label_weights = unmap(label_weights, num_total_anchors, inside_flags)
             bbox_targets = unmap(bbox_targets, num_total_anchors, inside_flags)
             bbox_weights = unmap(bbox_weights, num_total_anchors, inside_flags)
-            bbox_targets_iou = unmap(bbox_targets_iou, num_total_anchors, inside_flags)
+            bbox_gt_for_iou = unmap(bbox_gt_for_iou, num_total_anchors, inside_flags)
 
-        return (labels, label_weights, bbox_targets, bbox_weights, pos_inds, neg_inds, sampling_result, bbox_targets_iou)
+        return (labels, label_weights, bbox_targets, bbox_weights, pos_inds, neg_inds, sampling_result, bbox_gt_for_iou)
 
     def _get_bboxes_single(self,
                            cls_score_list,
@@ -499,7 +501,7 @@ class FCRBinaryHead(FCRHead):
 
         num_valid_anchors = anchors.shape[0]
         bbox_targets = torch.zeros_like(anchors)
-        bbox_targets_iou = torch.zeros_like(anchors)
+        bbox_gt_for_iou = torch.zeros_like(anchors)
         bbox_weights = torch.zeros_like(anchors)
         labels = anchors.new_full((num_valid_anchors,), self.num_classes, dtype=torch.long)
         label_weights = anchors.new_zeros(num_valid_anchors, dtype=torch.float)
@@ -513,7 +515,7 @@ class FCRBinaryHead(FCRHead):
         else:
             relative_num_diff = abs(len(neg_inds) - len(pos_inds)) / total_inds
         if len(pos_inds) > 0:
-            bbox_targets_iou[pos_inds, :] = sampling_result.pos_gt_bboxes.float()
+            bbox_gt_for_iou[pos_inds, :] = sampling_result.pos_gt_bboxes.float()
             if not self.reg_decoded_bbox:
                 pos_bbox_targets = self.bbox_coder.encode(sampling_result.pos_bboxes, sampling_result.pos_gt_bboxes)
             else:
@@ -540,9 +542,9 @@ class FCRBinaryHead(FCRHead):
             label_weights = unmap(label_weights, num_total_anchors, inside_flags)
             bbox_targets = unmap(bbox_targets, num_total_anchors, inside_flags)
             bbox_weights = unmap(bbox_weights, num_total_anchors, inside_flags)
-            bbox_targets_iou = unmap(bbox_targets_iou, num_total_anchors, inside_flags)
+            bbox_gt_for_iou = unmap(bbox_gt_for_iou, num_total_anchors, inside_flags)
 
-        return (labels, label_weights, bbox_targets, bbox_weights, pos_inds, neg_inds, sampling_result, bbox_targets_iou)
+        return (labels, label_weights, bbox_targets, bbox_weights, pos_inds, neg_inds, sampling_result, bbox_gt_for_iou)
 
 
 @HEADS.register_module

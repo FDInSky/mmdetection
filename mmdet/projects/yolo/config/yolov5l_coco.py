@@ -12,40 +12,32 @@ model = dict(
         out_channels=[256, 512, 1024],
         csp_repetition=2),
     bbox_head=dict(
-        type='YOLOV4Head',
+        type='YOLOV5Head',
         num_classes=80,
         in_channels=[256, 512, 1024],
         anchor_generator=dict(
             type='YOLOAnchorGenerator',
-            base_sizes=[[(12, 16), (19, 36), (40, 28)],        # P3/8
-                        [(36, 75), (76, 55), (72, 146)],       # P4/16
-                        [(142, 110), (192, 243), (459, 401)]], # P5/32
+            base_sizes=[[(10, 13), (16, 30), (33, 23)],        # P3/8
+                        [(30, 61), (62, 45), (59, 119)],       # P4/16
+                        [(116, 90), (156, 198), (373, 326)]],  # P5/32
             strides=[8, 16, 32]),
         bbox_coder=dict(type='YOLOBBoxCoder'),
         featmap_strides=[8, 16, 32],
         loss_cls=dict(
-            type='CrossEntropyLoss',
+            type='FocalLoss',
             use_sigmoid=True,
-            loss_weight=1.0,
-            reduction='sum'),
+            gamma=0.0,
+            alpha=0.25,
+            loss_weight=1.0),
         loss_conf=dict(
             type='CrossEntropyLoss',
             use_sigmoid=True,
             loss_weight=1.0,
             reduction='sum'),
-        loss_xy=dict(
-            type='CrossEntropyLoss',
-            use_sigmoid=True,
-            loss_weight=2.0,
-            reduction='sum'),
-        loss_wh=dict(
-            type='MSELoss', 
-            loss_weight=2.0, 
-            reduction='sum'),
         loss_iou=dict(
             type='CIoULoss',
             loss_weight=0.05),
-        loss_bbox_type='iou', # xywh
+        loss_bbox_type='iou',
     ),
     use_amp=True
 )
@@ -53,8 +45,8 @@ model = dict(
 train_cfg=dict(
     assigner=dict(
         type='GridAssigner',
-        pos_iou_thr=0.5,
-        neg_iou_thr=0.5,
+        pos_iou_thr=0.2,
+        neg_iou_thr=0.2,
         min_pos_iou=0
     )
 )
@@ -63,7 +55,7 @@ test_cfg=dict(
     min_bbox_size=0,
     score_thr=0.05,
     conf_thr=0.005,
-    nms=dict(type='nms', iou_threshold=0.5),
+    nms=dict(type='nms', iou_threshold=0.1),
     max_per_img=100
 )
 # Dataset

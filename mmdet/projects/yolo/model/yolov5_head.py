@@ -13,7 +13,7 @@ from mmdet.models.dense_heads.dense_test_mixins import BBoxTestMixin
 
 
 @HEADS.register_module()
-class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
+class YOLOV5Head(BaseDenseHead, BBoxTestMixin):
     """YOLOV3Head Paper link: https://arxiv.org/abs/1804.02767.
 
     Args:
@@ -56,9 +56,11 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
                  norm_cfg=dict(type='BN', requires_grad=True),
                  act_cfg=dict(type='LeakyReLU', negative_slope=0.1),
                  loss_cls=dict(
-                     type='CrossEntropyLoss',
-                     use_sigmoid=True,
-                     loss_weight=0.5),
+                    type='FocalLoss',
+                    use_sigmoid=True,
+                    gamma=0.0,
+                    alpha=0.25,
+                    loss_weight=1.0),
                  loss_conf=dict(
                      type='CrossEntropyLoss',
                      use_sigmoid=True,
@@ -72,11 +74,11 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
                      loss_weight=1.0),
                  loss_iou=dict(
                      type='CIoULoss',
-                     loss_weight=0.05),
-                 loss_bbox_type='xywh', # iou
+                     loss_weight=1.0),
+                 use_loss_iou=True,
                  train_cfg=None,
                  test_cfg=None):
-        super(YOLOV4Head, self).__init__()
+        super(YOLOV5Head, self).__init__()
         # Check params
         assert (len(in_channels) == len(featmap_strides))
 
@@ -104,11 +106,10 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
 
         self.loss_cls = build_loss(loss_cls)
         self.loss_conf = build_loss(loss_conf)
-        self.loss_bbox_type = loss_bbox_type
-        if self.loss_bbox_type == 'xywh':
-            self.loss_xy = build_loss(loss_xy)
-            self.loss_wh = build_loss(loss_wh)
-        elif self.loss_bbox_type == 'iou':
+        self.use_loss_iou = use_loss_iou
+        self.loss_xy = build_loss(loss_xy)
+        self.loss_wh = build_loss(loss_wh)
+        if self.use_loss_iou is True:
             self.loss_iou = build_loss(loss_iou)
         
         # usually the numbers of anchors for each level are the same
@@ -205,13 +206,11 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
         outs = dict(
             loss_cls=losses[0],
             loss_conf=losses[1],
+            loss_xy=losses[2],
+            loss_wh=losses[3]
         )
-        if self.loss_bbox_type == 'xywh':
-            outs['loss_xy'] = losses[-2]
-            outs['loss_wh'] = losses[-1]
-            # TODO: add them is OK ?
-        elif self.loss_bbox_type == 'iou':
-            outs['loss_bbox'] = losses[-1]
+        if self.use_loss_iou is True:
+            outs['loss_iou'] = losses[-1]
         return outs
 
     def loss_single(self, pred_map, target_map, neg_map, anchors, bbox_gt_for_iou, bbox_weights, stride):
@@ -242,26 +241,24 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
             pos_and_neg_mask = pos_and_neg_mask.clamp(min=0., max=1.)
 
         # cls loss
-        pred_label = pred_map[..., 5:]
-        target_label = target_map[..., 5:]
-        loss_cls = self.loss_cls(pred_label, target_label, weight=pos_mask)
+        pred_label = pred_map[..., 5:].reshape(-1, self.num_classes).contiguous()
+        target_label = target_map[..., 5:].reshape(-1).contiguous()
+        loss_cls = self.loss_cls(pred_label, target_label.long())
         # conf loss
         pred_conf = pred_map[..., 4]
         target_conf = target_map[..., 4]
         loss_conf = self.loss_conf(pred_conf, target_conf, weight=pos_and_neg_mask)
+        # xy & wh loss
+        pred_xy = pred_map[..., :2]
+        pred_wh = pred_map[..., 2:4]
+        target_xy = target_map[..., :2]
+        target_wh = target_map[..., 2:4]
+        loss_xy = self.loss_xy(pred_xy, target_xy, weight=pos_mask)
+        loss_wh = self.loss_wh(pred_wh, target_wh, weight=pos_mask)
         # out
-        outs = [loss_cls, loss_conf]
+        outs = [loss_cls, loss_conf, loss_xy, loss_wh]
         
-        if self.loss_bbox_type == 'xywh':
-            # xy & wh loss
-            pred_xy = pred_map[..., :2]
-            pred_wh = pred_map[..., 2:4]
-            target_xy = target_map[..., :2]
-            target_wh = target_map[..., 2:4]
-            loss_xy = self.loss_xy(pred_xy, target_xy, weight=pos_mask)
-            loss_wh = self.loss_wh(pred_wh, target_wh, weight=pos_mask)
-            outs.extend([loss_xy, loss_wh])
-        elif self.loss_bbox_type == 'iou':
+        if self.use_loss_iou is True:
             # iou loss
             bbox_gt_for_iou = bbox_gt_for_iou.reshape(-1, 4).contiguous()
             anchors = anchors.reshape(-1, 4)
@@ -269,8 +266,7 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
             bbox_weights = bbox_weights.reshape(-1, 4)
             bbox_pred_iou = self.bbox_coder.decode(anchors, bbox_pred, stride)
             loss_iou = self.loss_iou(bbox_pred_iou, bbox_gt_for_iou, bbox_weights)
-            outs.append(loss_iou)
-            
+            outs.append(loss_iou)            
         return outs 
 
     def get_targets(self, anchor_list, responsible_flag_list, gt_bboxes_list, gt_labels_list):
@@ -347,7 +343,7 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
         sampling_result = self.sampler.sample(assign_result, concat_anchors, gt_bboxes)
 
         pos_inds = sampling_result.pos_inds
-        target_map = concat_anchors.new_zeros(concat_anchors.size(0), self.num_attrib)
+        target_map = concat_anchors.new_zeros(concat_anchors.size(0), 6)
         # ctr_x, ctr_y, w, h
         target_map[pos_inds, :4] = self.bbox_coder.encode(
             sampling_result.pos_bboxes, sampling_result.pos_gt_bboxes, anchor_strides[sampling_result.pos_inds]
@@ -355,15 +351,13 @@ class YOLOV4Head(BaseDenseHead, BBoxTestMixin):
         # conf
         target_map[pos_inds, 4] = 1
         # label
-        gt_labels_one_hot = F.one_hot(gt_labels, num_classes=self.num_classes).float()
-        if self.one_hot_smoother != 0:  # label smooth
-            gt_labels_one_hot = gt_labels_one_hot * (1 - self.one_hot_smoother) + self.one_hot_smoother / self.num_classes
-        target_map[pos_inds, 5:self.num_attrib] = gt_labels_one_hot[sampling_result.pos_assigned_gt_inds]
+        # for focal loss
+        target_map[pos_inds, 5] = gt_labels[sampling_result.pos_assigned_gt_inds].float()
         
         neg_map = concat_anchors.new_zeros(concat_anchors.size(0), dtype=torch.uint8)
         neg_map[sampling_result.neg_inds] = 1
 
-        # for iou
+        # for iou loss
         bbox_gt_for_iou = torch.zeros_like(concat_anchors)
         bbox_weights = torch.zeros_like(concat_anchors)
         if len(pos_inds) > 0:
